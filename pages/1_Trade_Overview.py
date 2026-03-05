@@ -69,12 +69,17 @@ selected_year = st.selectbox(
 
 selected_row = df.loc[df["year"] == selected_year].iloc[0]
 
+# Escape $ to avoid Streamlit/Markdown treating it as LaTeX math
+exports_txt = format_usd_m(selected_row["exports"]).replace("$", r"\$")
+imports_txt = format_usd_m(selected_row["imports"]).replace("$", r"\$")
+balance_txt = format_usd_m(selected_row["balance"]).replace("$", r"\$")
+
 st.caption(
     {
-        "en": f"In {int(selected_row['year'])}, exports were {format_usd_m(selected_row['exports'])}, "
-              f"imports were {format_usd_m(selected_row['imports'])}, and balance was {format_usd_m(selected_row['balance'])}.",
-        "hy": f"{int(selected_row['year'])}-ին արտահանումը եղել է {format_usd_m(selected_row['exports'])}, "
-              f"ներմուծումը՝ {format_usd_m(selected_row['imports'])}, հաշվեկշիռը՝ {format_usd_m(selected_row['balance'])}։",
+        "en": f"In {int(selected_row['year'])}, exports were {exports_txt}, "
+              f"imports were {imports_txt}, and balance was {balance_txt}.",
+        "hy": f"{int(selected_row['year'])}-ին արտահանումը եղել է {exports_txt}, "
+              f"ներմուծումը՝ {imports_txt}, հաշվեկշիռը՝ {balance_txt}։",
     }[lang]
 )
 
@@ -89,7 +94,8 @@ metric_cols[4].metric(t("turnover"), format_usd_m(selected_row["turnover"]))
 line_chart = go.Figure()
 line_chart.add_trace(
     go.Scatter(
-        x=df["year"], y=df["exports_m"],
+        x=df["year"],
+        y=df["exports_m"],
         mode="lines+markers",
         name=t("exports"),
         line=dict(color=EXPORT_COLOR, width=3),
@@ -99,7 +105,8 @@ line_chart.add_trace(
 )
 line_chart.add_trace(
     go.Scatter(
-        x=df["year"], y=df["imports_m"],
+        x=df["year"],
+        y=df["imports_m"],
         mode="lines+markers",
         name=t("imports"),
         line=dict(color=IMPORT_COLOR, width=3),
@@ -111,7 +118,8 @@ line_chart.add_trace(
 sel = df[df["year"] == selected_year]
 line_chart.add_trace(
     go.Scatter(
-        x=sel["year"], y=sel["exports_m"],
+        x=sel["year"],
+        y=sel["exports_m"],
         mode="markers",
         marker=dict(size=16, color=SELECTION_COLOR, line=dict(color="white", width=2)),
         hovertemplate=f"{t('year')}: %{{x}}<br>{t('exports')}: $%{{y:,.1f}}M<extra></extra>",
@@ -120,7 +128,8 @@ line_chart.add_trace(
 )
 line_chart.add_trace(
     go.Scatter(
-        x=sel["year"], y=sel["imports_m"],
+        x=sel["year"],
+        y=sel["imports_m"],
         mode="markers",
         marker=dict(size=16, color=SELECTION_COLOR, line=dict(color="white", width=2)),
         hovertemplate=f"{t('year')}: %{{x}}<br>{t('imports')}: $%{{y:,.1f}}M<extra></extra>",
@@ -175,7 +184,10 @@ with c2:
 
 st.plotly_chart(turnover_chart, use_container_width=True)
 
-with st.expander({"en": "Show underlying yearly data (thousand USD)", "hy": "Ցույց տալ տարեկան տվյալները (հազար ԱՄՆ դոլար)"}[lang], expanded=False):
+with st.expander(
+    {"en": "Show underlying yearly data (thousand USD)", "hy": "Ցույց տալ տարեկան տվյալները (հազար ԱՄՆ դոլար)"}[lang],
+    expanded=False,
+):
     st.dataframe(
         df[["year", "exports", "imports", "balance", "turnover"]].style.format(
             {"exports": "{:,.0f}", "imports": "{:,.0f}", "balance": "{:,.0f}", "turnover": "{:,.0f}"}
