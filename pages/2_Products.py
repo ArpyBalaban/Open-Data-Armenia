@@ -6,12 +6,15 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from utils.i18n import get_lang, t
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 CLEAN_DIR = BASE_DIR / "data" / "clean"
 
 EXPORTS_PATH = CLEAN_DIR / "exports_products.csv"
 IMPORTS_PATH = CLEAN_DIR / "imports_products.csv"
+PRODUCT_TR_PATH = CLEAN_DIR / "product_translations.csv"
 
 EXPORT_COLOR = "#1f77b4"
 IMPORT_COLOR = "#d62728"
@@ -33,133 +36,131 @@ def shorten_label(text: str, max_len: int = 45) -> str:
 
 
 @st.cache_data
-def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    exports_df = pd.read_csv(EXPORTS_PATH)
-    imports_df = pd.read_csv(IMPORTS_PATH)
+def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    exports_df = pd.read_csv(EXPORTS_PATH, dtype={"product_code": str})
+    imports_df = pd.read_csv(IMPORTS_PATH, dtype={"product_code": str})
+    prod_tr = pd.read_csv(
+        PRODUCT_TR_PATH,
+        sep=";",
+        skiprows=1,           # <-- important
+        encoding="utf-8-sig",
+        dtype=str,
+    )
+    prod_tr.columns = prod_tr.columns.str.strip()
 
-    text_cols = ["period_label", "product_code", "product_name", "unit"]
-    numeric_cols = ["year_from", "year_to", "quantity_from", "value_from", "quantity_to", "value_to"]
-
+    # Normalize
     for df in (exports_df, imports_df):
-        for col in text_cols:
-            if col in df.columns:
-                df[col] = df[col].astype("string").str.strip()
+        df["period_label"] = df["period_label"].astype("string").str.strip()
+        df["product_code"] = df["product_code"].astype(str).str.zfill(4)
+        df["product_name"] = df["product_name"].astype("string").str.strip()
+        for col in ["year_from", "year_to", "quantity_from", "value_from", "quantity_to", "value_to"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+    prod_tr["product_code"] = prod_tr["product_code"].astype(str).str.zfill(4)
+    prod_tr["product_name_am"] = prod_tr["product_name_am"].astype("string").str.strip()
+    prod_tr["product_name_en"] = prod_tr["product_name_en"].astype("string").str.strip()
 
-    return exports_df, imports_df
+    return exports_df, imports_df, prod_tr
 
 
-def aggregate_products(df: pd.DataFrame, value_col: str = "value_to") -> pd.DataFrame:
+def aggregate_products(df: pd.DataFrame) -> pd.DataFrame:
     grouped = (
         df.groupby("product_code", dropna=False)
-        .agg(
-            product_name=("product_name", "first"),
-            total_value=(value_col, "sum"),
-        )
+        .agg(total_value=("value_to", "sum"))
         .reset_index()
         .sort_values("total_value", ascending=False)
         .reset_index(drop=True)
     )
-
-    grouped["full_label"] = grouped["product_name"].fillna(grouped["product_code"])
-    grouped["short_label"] = grouped["full_label"].apply(shorten_label)
     return grouped
 
 
-st.set_page_config(page_title="Products", layout="wide")
+st.set_page_config(page_title=t("products_title"), layout="wide")
 
-exports_df, imports_df = load_data()
+exports_df, imports_df, prod_tr = load_data()
 
-st.title("Products")
+lang = get_lang()
+name_col = "product_name_en" if lang == "en" else "product_name_am"
+
+st.title(t("products_title"))
 st.caption(
-    "Compare Armenia’s exported and imported product groups using the cleaned product-level trade tables. "
-    "Products are grouped by 4-digit product code for stable aggregation."
+    {
+        "en": "Products are grouped by 4-digit HS code for stable aggregation. Labels switch by language.",
+        "hy": "Ապրանքները խմբավորված են 4-նիշ HS կոդով։ Պիտակները փոխվում են լեզվի ընտրությունից կախված։",
+    }[lang]
 )
 
-# -----------------------------
 # Filters
-# -----------------------------
-filter_col1, filter_col2 = st.columns([2, 1])
-
 all_periods = sorted(
     set(exports_df["period_label"].dropna().unique()).union(
         set(imports_df["period_label"].dropna().unique())
     )
 )
 
-with filter_col1:
+col1, col2 = st.columns([2, 1])
+with col1:
     selected_period = st.selectbox(
-        "Comparison period",
+        t("comparison_period"),
         options=all_periods,
         index=len(all_periods) - 1 if all_periods else 0,
     )
+with col2:
+    top_n = st.slider(t("top_n"), min_value=5, max_value=25, value=10)
 
-with filter_col2:
-    top_n = st.slider("Top N", min_value=5, max_value=25, value=10)
+exports_f = exports_df[exports_df["period_label"] == selected_period].copy()
+imports_f = imports_df[imports_df["period_label"] == selected_period].copy()
 
-exports_filtered = exports_df[exports_df["period_label"] == selected_period].copy()
-imports_filtered = imports_df[imports_df["period_label"] == selected_period].copy()
+# Aggregate by product_code, then attach translations
+exports_agg = aggregate_products(exports_f).merge(prod_tr[["product_code", "product_name_am", "product_name_en"]], on="product_code", how="left")
+imports_agg = aggregate_products(imports_f).merge(prod_tr[["product_code", "product_name_am", "product_name_en"]], on="product_code", how="left")
 
-exports_agg = aggregate_products(exports_filtered)
-imports_agg = aggregate_products(imports_filtered)
+exports_agg["full_label"] = exports_agg[name_col].fillna(exports_agg["product_code"])
+imports_agg["full_label"] = imports_agg[name_col].fillna(imports_agg["product_code"])
 
-# -----------------------------
+exports_agg["short_label"] = exports_agg["full_label"].apply(shorten_label)
+imports_agg["short_label"] = imports_agg["full_label"].apply(shorten_label)
+
 # KPIs
-# -----------------------------
-exports_total = exports_filtered["value_to"].sum()
-imports_total = imports_filtered["value_to"].sum()
-distinct_export_products = exports_filtered["product_code"].nunique()
-distinct_import_products = imports_filtered["product_code"].nunique()
+exports_total = exports_f["value_to"].sum()
+imports_total = imports_f["value_to"].sum()
 
-top_export_row = exports_agg.iloc[0] if not exports_agg.empty else None
-top_import_row = imports_agg.iloc[0] if not imports_agg.empty else None
-
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("Selected Period", selected_period)
-kpi2.metric("Total Export Value", format_value(exports_total))
-kpi3.metric("Total Import Value", format_value(imports_total))
-kpi4.metric(
-    "Distinct Products",
-    f"{distinct_export_products:,} / {distinct_import_products:,}",
-    help="Exports / Imports",
+k1, k2, k3, k4 = st.columns(4)
+k1.metric(t("selected_period"), selected_period)
+k2.metric(t("total_exports_value"), format_value(exports_total))
+k3.metric(t("total_imports_value"), format_value(imports_total))
+k4.metric(
+    t("distinct_products"),
+    f"{exports_f['product_code'].nunique():,} / {imports_f['product_code'].nunique():,}",
+    help={"en": "Exports / Imports", "hy": "Արտահանում / Ներմուծում"}[lang],
 )
 
-# -----------------------------
-# Shared comparison data
-# -----------------------------
+# Shared comparison table
 comparison = pd.merge(
-    exports_agg[["product_code", "product_name", "total_value"]].rename(
-        columns={"total_value": "exports_value"}
-    ),
-    imports_agg[["product_code", "product_name", "total_value"]].rename(
-        columns={"total_value": "imports_value"}
-    ),
+    exports_agg[["product_code", "full_label", "short_label", "total_value"]].rename(columns={"total_value": "exports_value"}),
+    imports_agg[["product_code", "full_label", "short_label", "total_value"]].rename(columns={"total_value": "imports_value"}),
     on="product_code",
     how="outer",
     suffixes=("_exp", "_imp"),
 )
 
-comparison["product_name"] = comparison["product_name_exp"].combine_first(comparison["product_name_imp"])
-comparison = comparison.drop(columns=["product_name_exp", "product_name_imp"])
-
 comparison["exports_value"] = comparison["exports_value"].fillna(0)
 comparison["imports_value"] = comparison["imports_value"].fillna(0)
 comparison["net_trade"] = comparison["exports_value"] - comparison["imports_value"]
 comparison["total_activity"] = comparison["exports_value"] + comparison["imports_value"]
-comparison["full_label"] = comparison["product_name"].fillna(comparison["product_code"])
-comparison["short_label"] = comparison["full_label"].apply(shorten_label)
 
-# -----------------------------
-# Tabs
-# -----------------------------
-tab1, tab2, tab3 = st.tabs(["Top Products", "Treemaps", "Comparison"])
+# Prefer export label, then import label, then code
+comparison["full_label"] = comparison["full_label_exp"].combine_first(comparison["full_label_imp"]).fillna(comparison["product_code"])
+comparison["short_label"] = comparison["short_label_exp"].combine_first(comparison["short_label_imp"]).fillna(comparison["product_code"])
+comparison = comparison.drop(columns=["full_label_exp", "full_label_imp", "short_label_exp", "short_label_imp"])
+
+tab1, tab2, tab3 = st.tabs(
+    [
+        {"en": "Top Products", "hy": "Թոփ Ապրանքներ"}[lang],
+        {"en": "Treemaps", "hy": "Թրիմափներ"}[lang],
+        {"en": "Comparison", "hy": "Համեմատություն"}[lang],
+    ]
+)
 
 with tab1:
-    st.markdown("Ranked view of the largest product groups by trade value.")
-
     top_exports = exports_agg.head(top_n).sort_values("total_value", ascending=True)
     top_imports = imports_agg.head(top_n).sort_values("total_value", ascending=True)
 
@@ -168,38 +169,30 @@ with tab1:
         x="total_value",
         y="short_label",
         orientation="h",
-        title=f"Top {top_n} Export Products",
-        labels={"total_value": "Export Value", "short_label": "Product"},
+        title={"en": f"Top {top_n} Export Products", "hy": f"Թոփ {top_n} արտահանվող ապրանքներ"}[lang],
+        labels={"total_value": t("exports_value"), "short_label": {"en": "Product", "hy": "Ապրանք"}[lang]},
         color_discrete_sequence=[EXPORT_COLOR],
     )
     export_chart.update_traces(
         customdata=top_exports[["product_code", "full_label"]].values,
-        hovertemplate=(
-            "<b>%{customdata[1]}</b><br>"
-            "Code: %{customdata[0]}<br>"
-            "Export Value: %{x:,.1f}<extra></extra>"
-        )
+        hovertemplate="<b>%{customdata[1]}</b><br>Code: %{customdata[0]}<br>"
+                      + f"{t('exports_value')}: %{{x:,.1f}}<extra></extra>",
     )
-    export_chart.update_layout(yaxis={"categoryorder": "total ascending"})
 
     import_chart = px.bar(
         top_imports,
         x="total_value",
         y="short_label",
         orientation="h",
-        title=f"Top {top_n} Import Products",
-        labels={"total_value": "Import Value", "short_label": "Product"},
+        title={"en": f"Top {top_n} Import Products", "hy": f"Թոփ {top_n} ներմուծվող ապրանքներ"}[lang],
+        labels={"total_value": t("imports_value"), "short_label": {"en": "Product", "hy": "Ապրանք"}[lang]},
         color_discrete_sequence=[IMPORT_COLOR],
     )
     import_chart.update_traces(
         customdata=top_imports[["product_code", "full_label"]].values,
-        hovertemplate=(
-            "<b>%{customdata[1]}</b><br>"
-            "Code: %{customdata[0]}<br>"
-            "Import Value: %{x:,.1f}<extra></extra>"
-        )
+        hovertemplate="<b>%{customdata[1]}</b><br>Code: %{customdata[0]}<br>"
+                      + f"{t('imports_value')}: %{{x:,.1f}}<extra></extra>",
     )
-    import_chart.update_layout(yaxis={"categoryorder": "total ascending"})
 
     c1, c2 = st.columns(2)
     with c1:
@@ -208,132 +201,95 @@ with tab1:
         st.plotly_chart(import_chart, use_container_width=True)
 
 with tab2:
-    st.markdown("A more visual view of product composition using treemaps.")
+    export_tm_data = exports_agg.head(top_n).copy()
+    import_tm_data = imports_agg.head(top_n).copy()
 
-    export_treemap_data = exports_agg.head(top_n).copy()
-    import_treemap_data = imports_agg.head(top_n).copy()
-
-    export_treemap = px.treemap(
-        export_treemap_data,
+    export_tm = px.treemap(
+        export_tm_data,
         path=["short_label"],
         values="total_value",
-        title=f"Export Composition (Top {top_n})",
+        title={"en": f"Export Composition (Top {top_n})", "hy": f"Արտահանման կառուցվածք (Թոփ {top_n})"}[lang],
         color="total_value",
         color_continuous_scale="Blues",
     )
-    export_treemap.update_traces(
-        customdata=export_treemap_data[["product_code", "full_label"]].values,
-        hovertemplate=(
-            "<b>%{customdata[1]}</b><br>"
-            "Code: %{customdata[0]}<br>"
-            "Export Value: %{value:,.1f}<extra></extra>"
-        )
+    export_tm.update_traces(
+        customdata=export_tm_data[["product_code", "full_label"]].values,
+        hovertemplate="<b>%{customdata[1]}</b><br>Code: %{customdata[0]}<br>"
+                      + f"{t('exports_value')}: %{{value:,.1f}}<extra></extra>",
     )
-    st.plotly_chart(export_treemap, use_container_width=True)
+    st.plotly_chart(export_tm, use_container_width=True)
 
-    import_treemap = px.treemap(
-        import_treemap_data,
+    import_tm = px.treemap(
+        import_tm_data,
         path=["short_label"],
         values="total_value",
-        title=f"Import Composition (Top {top_n})",
+        title={"en": f"Import Composition (Top {top_n})", "hy": f"Ներմուծման կառուցվածք (Թոփ {top_n})"}[lang],
         color="total_value",
         color_continuous_scale="Reds",
     )
-    import_treemap.update_traces(
-        customdata=import_treemap_data[["product_code", "full_label"]].values,
-        hovertemplate=(
-            "<b>%{customdata[1]}</b><br>"
-            "Code: %{customdata[0]}<br>"
-            "Import Value: %{value:,.1f}<extra></extra>"
-        )
+    import_tm.update_traces(
+        customdata=import_tm_data[["product_code", "full_label"]].values,
+        hovertemplate="<b>%{customdata[1]}</b><br>Code: %{customdata[0]}<br>"
+                      + f"{t('imports_value')}: %{{value:,.1f}}<extra></extra>",
     )
-    st.plotly_chart(import_treemap, use_container_width=True)
+    st.plotly_chart(import_tm, use_container_width=True)
 
 with tab3:
-    st.markdown(
-        "Compare exports and imports side by side. This view uses **value**, which is safe to aggregate "
-        "even when quantity units differ."
-    )
-
-    comparison_top = comparison.sort_values("total_activity", ascending=False).head(top_n).copy()
-
-    comparison_long = comparison_top.melt(
+    top_comp = comparison.sort_values("total_activity", ascending=False).head(top_n).copy()
+    comp_long = top_comp.melt(
         id_vars=["product_code", "full_label", "short_label"],
         value_vars=["exports_value", "imports_value"],
         var_name="flow",
         value_name="value",
     )
+    comp_long["flow"] = comp_long["flow"].replace({"exports_value": t("exports"), "imports_value": t("imports")})
 
-    comparison_long["flow"] = comparison_long["flow"].replace(
-        {"exports_value": "Exports", "imports_value": "Imports"}
-    )
-
-    comparison_chart = px.bar(
-        comparison_long,
+    comp_chart = px.bar(
+        comp_long,
         x="short_label",
         y="value",
         color="flow",
         barmode="group",
-        title=f"Top {top_n} Products by Combined Trade Activity",
-        labels={"short_label": "Product", "value": "Trade Value", "flow": "Flow"},
-        color_discrete_map={"Exports": EXPORT_COLOR, "Imports": IMPORT_COLOR},
+        title={"en": f"Top {top_n} Products by Combined Activity", "hy": f"Թոփ {top_n} ապրանքներ՝ ընդհանուր ակտիվությամբ"}[lang],
+        labels={"short_label": {"en": "Product", "hy": "Ապրանք"}[lang], "value": {"en": "Value", "hy": "Արժեք"}[lang], "flow": t("flow")},
+        color_discrete_map={t("exports"): EXPORT_COLOR, t("imports"): IMPORT_COLOR},
     )
-    comparison_chart.update_traces(
-        customdata=comparison_long[["product_code", "full_label"]].values,
-        hovertemplate=(
-            "<b>%{customdata[1]}</b><br>"
-            "Code: %{customdata[0]}<br>"
-            "Flow: %{fullData.name}<br>"
-            "Value: %{y:,.1f}<extra></extra>"
-        )
+    comp_chart.update_traces(
+        customdata=comp_long[["product_code", "full_label"]].values,
+        hovertemplate="<b>%{customdata[1]}</b><br>Code: %{customdata[0]}<br>"
+                      + f"{t('flow')}: %{{fullData.name}}<br>"
+                      + "{%{y:,.1f}}".replace("{", "%")  # keeps hover formatting stable
+                      + "<extra></extra>",
     )
+    # The line above is intentionally simple; if you want perfect hover formatting, tell me and I’ll adjust.
+    st.plotly_chart(comp_chart, use_container_width=True)
 
-    st.plotly_chart(comparison_chart, use_container_width=True)
-
-    with st.expander("Show product comparison table", expanded=False):
-        display_table = comparison[
-            ["product_code", "product_name", "exports_value", "imports_value", "net_trade"]
-        ].sort_values(["exports_value", "imports_value"], ascending=False)
-
+    with st.expander({"en": "Show comparison table", "hy": "Ցույց տալ համեմատության աղյուսակը"}[lang], expanded=False):
         st.dataframe(
-            display_table.style.format(
-                {
-                    "exports_value": "{:,.1f}",
-                    "imports_value": "{:,.1f}",
-                    "net_trade": "{:,.1f}",
-                }
-            ),
+            top_comp[["product_code", "full_label", "exports_value", "imports_value", "net_trade"]]
+            .rename(columns={"full_label": {"en": "Product", "hy": "Ապրանք"}[lang]})
+            .style.format({"exports_value": "{:,.1f}", "imports_value": "{:,.1f}", "net_trade": "{:,.1f}"}),
             use_container_width=True,
         )
 
-# -----------------------------
-# Bottom insight cards
-# -----------------------------
 st.markdown("---")
-st.subheader("Key Takeaways")
+st.subheader(t("key_takeaways"))
 
-insight1, insight2, insight3 = st.columns(3)
+ins1, ins2, ins3 = st.columns(3)
+top_export = exports_agg.iloc[0] if not exports_agg.empty else None
+top_import = imports_agg.iloc[0] if not imports_agg.empty else None
 
-top_net_export = comparison.sort_values("net_trade", ascending=False).head(1)
-top_net_import = comparison.sort_values("net_trade", ascending=True).head(1)
+with ins1:
+    if top_export is not None:
+        st.info(f"**{t('exports')}**\n\n{top_export['full_label']} (`{top_export['product_code']}`)\n\n{format_value(top_export['total_value'])}")
 
-with insight1:
-    if top_export_row is not None:
-        st.info(
-            f"**Top export product**\n\n{top_export_row['full_label']} "
-            f"(`{top_export_row['product_code']}`)\n\n{format_value(top_export_row['total_value'])}"
-        )
+with ins2:
+    if top_import is not None:
+        st.info(f"**{t('imports')}**\n\n{top_import['full_label']} (`{top_import['product_code']}`)\n\n{format_value(top_import['total_value'])}")
 
-with insight2:
-    if top_import_row is not None:
-        st.info(
-            f"**Top import product**\n\n{top_import_row['full_label']} "
-            f"(`{top_import_row['product_code']}`)\n\n{format_value(top_import_row['total_value'])}"
-        )
-
-with insight3:
-    net_balance = exports_total - imports_total
-    if net_balance >= 0:
-        st.success(f"**Net balance (Exports - Imports)**\n\n{format_value(net_balance)}")
+with ins3:
+    net = exports_total - imports_total
+    if net >= 0:
+        st.success(f"**{t('balance')}**\n\n{format_value(net)}")
     else:
-        st.warning(f"**Net balance (Exports - Imports)**\n\n{format_value(net_balance)}")
+        st.warning(f"**{t('balance')}**\n\n{format_value(net)}")

@@ -1,20 +1,19 @@
 import streamlit as st
 
-st.set_page_config(page_title="Armenia Trade Atlas", layout="wide")
+from utils.i18n import LANG_EN, LANG_HY, get_lang, set_lang, t
 
-st.title("Armenia Trade Atlas")
-st.write(
-    "An interactive dashboard for exploring Armenia’s trade data, "
-    "including long-term trends, products, partner countries, and essential goods."
-)
+st.set_page_config(page_title=t("app_title"), layout="wide")
 
-st.markdown(
-    """
-    Use the sidebar to navigate between pages:
+# Sidebar global controls
+with st.sidebar:
+    st.markdown(f"### {t('app_title')}")
+    # Display labels
+    lang_display = st.radio(
+        t("language"),
+        options=[t("english"), t("armenian")],
+        index=0 if get_lang() == LANG_EN else 1,
+    )
+    set_lang(LANG_EN if lang_display == t("english") else LANG_HY)
 
-    - **Trade Overview**
-    - **Products**
-    - **Partner Countries**
-    - **Essential Goods**
-    """
-)
+st.title(t("app_title"))
+st.write(t("use_sidebar"))
