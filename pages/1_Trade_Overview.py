@@ -7,7 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from utils.i18n import t
+from utils.i18n import t, get_lang
 
 
 DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "clean" / "trade_overview.csv"
@@ -19,10 +19,16 @@ SURPLUS_COLOR = "#1f77b4"
 DEFICIT_COLOR = "#d62728"
 
 
-def format_value(value: float) -> str:
-    if pd.isna(value):
+def usd_m(value_thousand: float) -> float:
+    """Convert thousand USD -> million USD."""
+    return value_thousand / 1000 if pd.notna(value_thousand) else float("nan")
+
+
+def format_usd_m(value_thousand: float) -> str:
+    """Format thousand USD as $X.XM."""
+    if pd.isna(value_thousand):
         return "—"
-    return f"{value:,.0f}"
+    return f"${usd_m(value_thousand):,.1f}M"
 
 
 @st.cache_data
@@ -31,11 +37,19 @@ def load_data() -> pd.DataFrame:
     df = df.sort_values("year").reset_index(drop=True)
     for col in ["year", "exports", "imports", "balance", "turnover"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Display columns in million USD
+    df["exports_m"] = df["exports"] / 1000
+    df["imports_m"] = df["imports"] / 1000
+    df["balance_m"] = df["balance"] / 1000
+    df["turnover_m"] = df["turnover"] / 1000
+
     return df
 
 
 st.set_page_config(page_title=t("trade_overview_title"), layout="wide")
 
+lang = get_lang()
 df = load_data()
 
 st.title(t("trade_overview_title"))
@@ -43,7 +57,7 @@ st.write(
     {
         "en": "Yearly overview of exports, imports, trade balance, and total turnover.",
         "hy": "Տարեկան ամփոփ պատկեր՝ արտահանում, ներմուծում, հաշվեկշիռ և ընդհանուր շրջանառություն։",
-    }.get(st.session_state.get("lang", "en"), "Yearly overview of exports, imports, trade balance, and total turnover.")
+    }[lang]
 )
 
 available_years = sorted(df["year"].dropna().astype(int).unique().tolist())
@@ -57,71 +71,71 @@ selected_row = df.loc[df["year"] == selected_year].iloc[0]
 
 st.caption(
     {
-        "en": f"In {int(selected_row['year'])}, exports were {format_value(selected_row['exports'])}, "
-              f"imports were {format_value(selected_row['imports'])}, and balance was {format_value(selected_row['balance'])}.",
-        "hy": f"{int(selected_row['year'])}-ին արտահանումը եղել է {format_value(selected_row['exports'])}, "
-              f"ներմուծումը՝ {format_value(selected_row['imports'])}, հաշվեկշիռը՝ {format_value(selected_row['balance'])}։",
-    }.get(st.session_state.get("lang", "en"))
+        "en": f"In {int(selected_row['year'])}, exports were {format_usd_m(selected_row['exports'])}, "
+              f"imports were {format_usd_m(selected_row['imports'])}, and balance was {format_usd_m(selected_row['balance'])}.",
+        "hy": f"{int(selected_row['year'])}-ին արտահանումը եղել է {format_usd_m(selected_row['exports'])}, "
+              f"ներմուծումը՝ {format_usd_m(selected_row['imports'])}, հաշվեկշիռը՝ {format_usd_m(selected_row['balance'])}։",
+    }[lang]
 )
 
 metric_cols = st.columns(5)
 metric_cols[0].metric(t("year"), str(int(selected_row["year"])))
-metric_cols[1].metric(t("exports"), format_value(selected_row["exports"]))
-metric_cols[2].metric(t("imports"), format_value(selected_row["imports"]))
-metric_cols[3].metric(t("balance"), format_value(selected_row["balance"]))
-metric_cols[4].metric(t("turnover"), format_value(selected_row["turnover"]))
+metric_cols[1].metric(t("exports"), format_usd_m(selected_row["exports"]))
+metric_cols[2].metric(t("imports"), format_usd_m(selected_row["imports"]))
+metric_cols[3].metric(t("balance"), format_usd_m(selected_row["balance"]))
+metric_cols[4].metric(t("turnover"), format_usd_m(selected_row["turnover"]))
 
-# Chart 1: exports vs imports + highlighted selected year
+# Chart 1: exports vs imports (million USD) + highlighted selected year
 line_chart = go.Figure()
 line_chart.add_trace(
     go.Scatter(
-        x=df["year"], y=df["exports"],
+        x=df["year"], y=df["exports_m"],
         mode="lines+markers",
         name=t("exports"),
         line=dict(color=EXPORT_COLOR, width=3),
         marker=dict(size=7, color=EXPORT_COLOR),
-        hovertemplate=f"{t('year')}: %{{x}}<br>{t('exports')}: %{{y:,.0f}}<extra></extra>",
+        hovertemplate=f"{t('year')}: %{{x}}<br>{t('exports')}: $%{{y:,.1f}}M<extra></extra>",
     )
 )
 line_chart.add_trace(
     go.Scatter(
-        x=df["year"], y=df["imports"],
+        x=df["year"], y=df["imports_m"],
         mode="lines+markers",
         name=t("imports"),
         line=dict(color=IMPORT_COLOR, width=3),
         marker=dict(size=7, color=IMPORT_COLOR),
-        hovertemplate=f"{t('year')}: %{{x}}<br>{t('imports')}: %{{y:,.0f}}<extra></extra>",
+        hovertemplate=f"{t('year')}: %{{x}}<br>{t('imports')}: $%{{y:,.1f}}M<extra></extra>",
     )
 )
 
 sel = df[df["year"] == selected_year]
 line_chart.add_trace(
     go.Scatter(
-        x=sel["year"], y=sel["exports"],
+        x=sel["year"], y=sel["exports_m"],
         mode="markers",
         marker=dict(size=16, color=SELECTION_COLOR, line=dict(color="white", width=2)),
-        hovertemplate=f"{t('year')}: %{{x}}<br>{t('exports')}: %{{y:,.0f}}<extra></extra>",
+        hovertemplate=f"{t('year')}: %{{x}}<br>{t('exports')}: $%{{y:,.1f}}M<extra></extra>",
         showlegend=False,
     )
 )
 line_chart.add_trace(
     go.Scatter(
-        x=sel["year"], y=sel["imports"],
+        x=sel["year"], y=sel["imports_m"],
         mode="markers",
         marker=dict(size=16, color=SELECTION_COLOR, line=dict(color="white", width=2)),
-        hovertemplate=f"{t('year')}: %{{x}}<br>{t('imports')}: %{{y:,.0f}}<extra></extra>",
+        hovertemplate=f"{t('year')}: %{{x}}<br>{t('imports')}: $%{{y:,.1f}}M<extra></extra>",
         showlegend=False,
     )
 )
 
 line_chart.update_layout(
-    title={"en": "Exports vs Imports Over Time", "hy": "Արտահանումն ընդդեմ Ներմուծման (Ժամանակի Ընթացքում)"}[st.session_state.get("lang","en")],
+    title={"en": "Exports vs Imports Over Time", "hy": "Արտահանումն ընդդեմ Ներմուծման (Ժամանակի Ընթացքում)"}[lang],
     xaxis_title=t("year"),
-    yaxis_title={"en": "USD (thousands)", "hy": "ԱՄՆ դոլար (հազար)"}[st.session_state.get("lang","en")],
+    yaxis_title={"en": "USD (millions)", "hy": "ԱՄՆ դոլար (միլիոն)"}[lang],
     hovermode="x unified",
 )
 
-# Chart 2: balance with selected bar highlighted
+# Chart 2: balance (million USD) with selected bar highlighted
 balance_df = df.copy()
 balance_df["bar_color"] = balance_df["balance"].apply(lambda x: SURPLUS_COLOR if x >= 0 else DEFICIT_COLOR)
 balance_df.loc[balance_df["year"] == selected_year, "bar_color"] = SELECTION_COLOR
@@ -129,28 +143,28 @@ balance_df.loc[balance_df["year"] == selected_year, "bar_color"] = SELECTION_COL
 bar_chart = px.bar(
     balance_df,
     x="year",
-    y="balance",
-    title={"en": "Trade Balance by Year", "hy": "Առևտրային Հաշվեկշիռը՝ ըստ Տարու"}[st.session_state.get("lang","en")],
-    labels={"balance": {"en": "USD (thousands)", "hy": "ԱՄՆ դոլար (հազար)"}[st.session_state.get("lang","en")], "year": t("year")},
+    y="balance_m",
+    title={"en": "Trade Balance by Year", "hy": "Առևտրային Հաշվեկշիռը՝ ըստ Տարու"}[lang],
+    labels={"balance_m": {"en": "USD (millions)", "hy": "ԱՄՆ դոլար (միլիոն)"}[lang], "year": t("year")},
 )
 bar_chart.update_traces(
     marker_color=balance_df["bar_color"],
-    hovertemplate=f"{t('year')}: %{{x}}<br>{t('balance')}: %{{y:,.0f}}<extra></extra>",
+    hovertemplate=f"{t('year')}: %{{x}}<br>{t('balance')}: $%{{y:,.1f}}M<extra></extra>",
 )
 
-# Chart 3: turnover
+# Chart 3: turnover (million USD)
 turnover_chart = px.line(
     df,
     x="year",
-    y="turnover",
-    title={"en": "Total Trade Turnover Over Time", "hy": "Ընդհանուր Շրջանառություն՝ Ժամանակի Ընթացքում"}[st.session_state.get("lang","en")],
+    y="turnover_m",
+    title={"en": "Total Trade Turnover Over Time", "hy": "Ընդհանուր Շրջանառություն՝ Ժամանակի Ընթացքում"}[lang],
     markers=True,
-    labels={"turnover": {"en": "USD (thousands)", "hy": "ԱՄՆ դոլար (հազար)"}[st.session_state.get("lang","en")], "year": t("year")},
+    labels={"turnover_m": {"en": "USD (millions)", "hy": "ԱՄՆ դոլար (միլիոն)"}[lang], "year": t("year")},
 )
 turnover_chart.update_traces(
     line=dict(width=3),
     marker=dict(size=7),
-    hovertemplate=f"{t('year')}: %{{x}}<br>{t('turnover')}: %{{y:,.0f}}<extra></extra>",
+    hovertemplate=f"{t('year')}: %{{x}}<br>{t('turnover')}: $%{{y:,.1f}}M<extra></extra>",
 )
 
 c1, c2 = st.columns(2)
@@ -161,8 +175,10 @@ with c2:
 
 st.plotly_chart(turnover_chart, use_container_width=True)
 
-with st.expander({"en": "Show underlying yearly data", "hy": "Ցույց տալ տարեկան տվյալների աղյուսակը"}[st.session_state.get("lang","en")], expanded=False):
+with st.expander({"en": "Show underlying yearly data (thousand USD)", "hy": "Ցույց տալ տարեկան տվյալները (հազար ԱՄՆ դոլար)"}[lang], expanded=False):
     st.dataframe(
-        df.style.format({"exports": "{:,.0f}", "imports": "{:,.0f}", "balance": "{:,.0f}", "turnover": "{:,.0f}"}),
+        df[["year", "exports", "imports", "balance", "turnover"]].style.format(
+            {"exports": "{:,.0f}", "imports": "{:,.0f}", "balance": "{:,.0f}", "turnover": "{:,.0f}"}
+        ),
         use_container_width=True,
     )
