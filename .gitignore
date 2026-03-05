@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Raw archives
+*.zip
+*.xls
+*.xlsx
+
+# Raw / extracted data folders
+data/raw/
+exports/
+imports/
+foreign trade 2002-2022/
+customs-rules-violations/
+electric-vehicles/
+goods-of-social-significance/
+
+# Streamlit / misc caches
+.streamlit/secrets.toml
